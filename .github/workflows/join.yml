@@ -87,7 +87,7 @@ jobs:
           ollama pull embeddinggemma
 
       - name: Install project dependencies
-        run: npm install
+        run: npm ci
 
       - name: Join Minecraft server
         id: join
