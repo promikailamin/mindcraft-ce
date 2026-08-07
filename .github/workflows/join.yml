@@ -2,7 +2,27 @@ name: Join Minecraft Server
 
 on:
   issues:
-    types: [opened]
+    types: [opened, reopened]
+  workflow_dispatch:
+    inputs:
+      ip:
+        description: Minecraft server host or IP
+        required: true
+      port:
+        description: Minecraft server port
+        required: true
+      auth:
+        description: Offline auth mode (offline/microsoft)
+        required: false
+      name:
+        description: Bot name
+        required: false
+      version:
+        description: Minecraft version
+        required: false
+      message:
+        description: Initial chat message
+        required: false
 
 permissions:
   contents: read
@@ -13,15 +33,20 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 360
     if: >-
-      ${{ github.event.issue.title == 'join' ||
+      ${{ github.event_name == 'workflow_dispatch' ||
+          github.event.issue.title == 'join' ||
           github.event.issue.title == 'Join' ||
           github.event.issue.title == 'JOIN' }}
 
     steps:
-      - name: Parse connection details from issue
+      - name: Parse connection details
         id: parse
         env:
-          BODY: ${{ github.event.issue.body }}
+          BODY: >-
+            ${{ github.event_name == 'workflow_dispatch'
+                && format('ip={0} port={1} auth={2} name={3} version={4} message={5}',
+                    inputs.ip, inputs.port, inputs.auth, inputs.name, inputs.version, inputs.message)
+                || github.event.issue.body }}
         run: |
           ip="$(grep -ioE 'ip=[^[:space:],;]+' <<< "$BODY" | head -1 | cut -d= -f2- | tr -d '\r[:space:]')"
           port="$(grep -ioE 'port=[^[:space:],;]+' <<< "$BODY" | head -1 | cut -d= -f2- | tr -d '\r[:space:]')"
@@ -44,6 +69,7 @@ jobs:
           echo "message=$message" >> "$GITHUB_OUTPUT"
 
       - name: Comment starting setup
+        if: github.event_name == 'issues'
         uses: actions/github-script@v7
         with:
           script: |
@@ -130,7 +156,7 @@ jobs:
           done
 
       - name: Notify failure
-        if: failure()
+        if: failure() && github.event_name == 'issues'
         uses: actions/github-script@v7
         with:
           script: |
