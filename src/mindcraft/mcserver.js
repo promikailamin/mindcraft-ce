@@ -34,6 +34,13 @@ export async function serverInfo(ip, port, timeout = 1000, verbose = false) {
             const version = response?.version?.name || '';
             const match = String(version).match(/\d+\.\d+(?:\.\d+)?/);
             const numericVersion = match ? match[0] : null;
+
+            if (!numericVersion) {
+                // Server is still starting up (e.g. Aternos "Preparing...") or
+                // reports an invalid/unknown version (e.g. -1). Treat as not ready
+                // so callers can retry instead of connecting with a bad version.
+                return resolve(null);
+            }
             if (numericVersion !== version) {
                 console.log(`Modded server found (${version}), attempting to use ${numericVersion}...`);
             }
@@ -127,7 +134,7 @@ export async function getServer(host, port, version) {
             throw new Error(`No server found on LAN.`);
     }
     else
-        server = await serverInfo(host, port, 1000, true);
+        server = await serverInfo(host, port, 5000, true);
 
     // Server not found
     if (server == null) 

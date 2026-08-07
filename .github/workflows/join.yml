@@ -115,6 +115,50 @@ jobs:
       - name: Install project dependencies
         run: npm ci
 
+      - name: Wait for Minecraft server to be ready
+        id: wait
+        env:
+          IP: ${{ steps.parse.outputs.ip }}
+          PORT: ${{ steps.parse.outputs.port }}
+        run: |
+          node -e '
+            const net = require("net");
+            const mc = require("minecraft-protocol");
+            const fs = require("fs");
+
+            const ip = process.env.IP;
+            const port = parseInt(process.env.PORT, 10);
+            const timeoutMs = 10 * 60 * 1000;
+            const started = Date.now();
+
+            const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+            const ping = () => new Promise((resolve) => {
+              mc.ping({ host: ip, port }, (err, res) => {
+                if (err) return resolve(null);
+                const v = (res && res.version && res.version.name) || "";
+                const m = String(v).match(/\d+\.\d+(?:\.\d+)?/);
+                resolve(m ? m[0] : null);
+              });
+            });
+
+            (async () => {
+              while (Date.now() - started < timeoutMs) {
+                let ver = null;
+                try { ver = await ping(); } catch (_) {}
+                if (ver) {
+                  console.log("Detected Minecraft version: " + ver);
+                  fs.appendFileSync(process.env.GITHUB_OUTPUT, "version=" + ver + "\n");
+                  process.exit(0);
+                }
+                const elapsed = Math.round((Date.now() - started) / 1000);
+                console.log("Server not ready yet (" + elapsed + "s elapsed). Retrying in 10s...");
+                await sleep(10000);
+              }
+              console.error("Server " + ip + ":" + port + " did not become ready within " + (timeoutMs / 1000) + "s");
+              process.exit(1);
+            })();
+          '
+
       - name: Join Minecraft server
         id: join
         env:
@@ -122,7 +166,7 @@ jobs:
           PORT: ${{ steps.parse.outputs.port }}
           AUTH: ${{ steps.parse.outputs.auth }}
           NAME: ${{ steps.parse.outputs.name }}
-          VERSION: ${{ steps.parse.outputs.version }}
+          VERSION: ${{ steps.wait.outputs.version }}
           MESSAGE: ${{ steps.parse.outputs.message }}
         run: |
           export OLLAMA_URL="http://localhost:11434"
@@ -133,7 +177,7 @@ jobs:
             node -e "const fs=require('fs');const p='profiles/andy.json';const j=JSON.parse(fs.readFileSync(p,'utf8'));j.name='$NAME';fs.writeFileSync(p,JSON.stringify(j,null,4))"
           fi
 
-          settings='{"host":"'"$IP"'","auto_open_ui":false'
+          settings='{"host":"'"$IP"'","auto_open_ui":false,"spawn_timeout":120'
           if [ -n "$AUTH" ]; then settings="$settings,\"auth\":\"$AUTH\""; fi
           if [ -n "$VERSION" ]; then settings="$settings,\"minecraft_version\":\"$VERSION\""; fi
           if [ -n "$MESSAGE" ]; then settings="$settings,\"init_message\":\"$MESSAGE\""; fi
