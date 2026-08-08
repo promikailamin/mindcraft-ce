@@ -107,6 +107,116 @@ jobs:
             sleep 2
           done
 
+name: Join Minecraft Server
+
+on:
+  issues:
+    types: [opened, reopened]
+  workflow_dispatch:
+    inputs:
+      ip:
+        description: Minecraft server host or IP
+        required: true
+      port:
+        description: Minecraft server port
+        required: true
+      auth:
+        description: Offline auth mode (offline/microsoft)
+        required: false
+      name:
+        description: Bot name
+        required: false
+      version:
+        description: Minecraft version
+        required: false
+      message:
+        description: Initial chat message
+        required: false
+
+permissions:
+  contents: read
+  issues: write
+  actions: write
+
+jobs:
+  join:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' ||
+          github.event.issue.title == 'join' ||
+          github.event.issue.title == 'Join' ||
+          github.event.issue.title == 'JOIN' }}
+
+    steps:
+      - name: Parse connection details
+        id: parse
+        env:
+          BODY: >-
+            ${{ github.event_name == 'workflow_dispatch'
+                && format('ip={0} port={1} auth={2} name={3} version={4} message={5}',
+                    inputs.ip, inputs.port, inputs.auth, inputs.name, inputs.version, inputs.message)
+                || github.event.issue.body }}
+        run: |
+          ip="$(grep -ioE 'ip=[^[:space:],;]+' <<< "$BODY" | head -1 | cut -d= -f2- | tr -d '\r[:space:]')"
+          port="$(grep -ioE 'port=[^[:space:],;]+' <<< "$BODY" | head -1 | cut -d= -f2- | tr -d '\r[:space:]')"
+          auth="$(grep -ioE 'auth=[^[:space:],;]+' <<< "$BODY" | head -1 | cut -d= -f2- | tr -d '\r[:space:]')"
+          name="$(grep -ioE 'name=[^[:space:],;]+' <<< "$BODY" | head -1 | cut -d= -f2- | tr -d '\r[:space:]')"
+          version="$(grep -ioE 'version=[^[:space:],;]+' <<< "$BODY" | head -1 | cut -d= -f2- | tr -d '\r[:space:]')"
+          message="$(grep -ioE 'message=[^[:space:],;]+' <<< "$BODY" | head -1 | cut -d= -f2- | tr -d '\r')"
+
+          if [ -z "$ip" ] || [ -z "$port" ]; then
+            echo "::error title=Missing details::Issue body must contain 'ip=...' and 'port=...' lines"
+            echo "expected format: ip=<host or ip>  port=<minecraft port>"
+            exit 1
+          fi
+
+          echo "ip=$ip" >> "$GITHUB_OUTPUT"
+          echo "port=$port" >> "$GITHUB_OUTPUT"
+          echo "auth=$auth" >> "$GITHUB_OUTPUT"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "message=$message" >> "$GITHUB_OUTPUT"
+
+      - name: Comment starting setup
+        if: github.event_name == 'issues'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `Setting up the Andy bot to join \`${{ steps.parse.outputs.ip }}:${{ steps.parse.outputs.port }}\`...`
+            })
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config python3 python-is-python3 \
+            libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev \
+            libxi-dev libxinerama-dev libxrandr-dev \
+            libgl1-mesa-dev libgles2-mesa-dev libosmesa6-dev
+
+      - name: Install ollama
+        run: |
+          curl -fsSL https://ollama.com/install.sh | sh
+          nohup ollama serve > /tmp/ollama.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:11434/api/tags >/dev/null 2>&1; then
+              echo "ollama is ready"
+              break
+            fi
+            sleep 2
+          done
+
       - name: Pull andy model
         run: |
           ollama pull sweaterdog/andy-4:micro-q8_0
@@ -199,11 +309,68 @@ jobs:
             sleep 10
           done
 
+      - name: Auto-restart workflow on cancellation
+        if: cancelled()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            
+            // Get the original workflow run ID that triggered this
+            const runId = process.env.GITHUB_RUN_ID;
+            
+            // Get the issue number if this was triggered by an issue
+            const issueNumber = context.issue.number || null;
+            
+            // Create a comment about auto-restart
+            if (issueNumber) {
+              await github.rest.issues.createComment({
+                issue_number: issueNumber,
+                owner: owner,
+                repo: repo,
+                body: 'The workflow was cancelled due to GitHub Actions 6-hour limit. Auto-restarting...'
+              });
+            }
+            
+            // Dispatch a new workflow run with the same inputs
+            const inputs = {
+              ip: '${{ steps.parse.outputs.ip }}',
+              port: '${{ steps.parse.outputs.port }}',
+              auth: '${{ steps.parse.outputs.auth }}',
+              name: '${{ steps.parse.outputs.name }}',
+              version: '${{ steps.wait.outputs.version }}',
+              message: '${{ steps.parse.outputs.message }}'
+            };
+            
+            // Remove empty values
+            Object.keys(inputs).forEach(key => {
+              if (!inputs[key] || inputs[key] === 'undefined' || inputs[key] === 'null') {
+                delete inputs[key];
+              }
+            });
+            
+            console.log('Triggering new workflow with inputs:', inputs);
+            
+            await github.rest.actions.createWorkflowDispatch({
+              owner: owner,
+              repo: repo,
+              workflow_id: 'join-minecraft-server.yml',
+              ref: context.ref,
+              inputs: inputs
+            });
+
       - name: Notify failure
         if: failure() && github.event_name == 'issues'
         uses: actions/github-script@v7
         with:
           script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: 'Failed to join the server. Check the workflow run logs for details.'
+            })
             github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
