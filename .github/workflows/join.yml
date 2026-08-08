@@ -261,4 +261,4 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               body: 'Failed to join the server. Check the workflow run logs for details.'
-            })
+            }) 
