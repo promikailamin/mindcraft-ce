@@ -246,7 +246,7 @@ jobs:
             await github.rest.actions.createWorkflowDispatch({
               owner: owner,
               repo: repo,
-              workflow_id: 'join-minecraft-server.yml',
+              workflow_id: 'join.yml',
               ref: context.ref,
               inputs: inputs
             });
