@@ -200,57 +200,6 @@ jobs:
             sleep 10
           done
 
-      - name: Auto-restart workflow on cancellation
-        if: cancelled()
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const owner = context.repo.owner;
-            const repo = context.repo.repo;
-            
-            // Get the original workflow run ID that triggered this
-            const runId = process.env.GITHUB_RUN_ID;
-            
-            // Get the issue number if this was triggered by an issue
-            const issueNumber = context.issue.number || null;
-            
-            // Create a comment about auto-restart
-            if (issueNumber) {
-              await github.rest.issues.createComment({
-                issue_number: issueNumber,
-                owner: owner,
-                repo: repo,
-                body: 'The workflow was cancelled due to GitHub Actions 6-hour limit. Auto-restarting...'
-              });
-            }
-            
-            // Dispatch a new workflow run with the same inputs
-            const inputs = {
-              ip: '${{ steps.parse.outputs.ip }}',
-              port: '${{ steps.parse.outputs.port }}',
-              auth: '${{ steps.parse.outputs.auth }}',
-              name: '${{ steps.parse.outputs.name }}',
-              version: '${{ steps.wait.outputs.version }}',
-              message: '${{ steps.parse.outputs.message }}'
-            };
-            
-            // Remove empty values
-            Object.keys(inputs).forEach(key => {
-              if (!inputs[key] || inputs[key] === 'undefined' || inputs[key] === 'null') {
-                delete inputs[key];
-              }
-            });
-            
-            console.log('Triggering new workflow with inputs:', inputs);
-            
-            await github.rest.actions.createWorkflowDispatch({
-              owner: owner,
-              repo: repo,
-              workflow_id: 'join.yml',
-              ref: context.ref,
-              inputs: inputs
-            });
-
       - name: Notify failure
         if: failure() && github.event_name == 'issues'
         uses: actions/github-script@v7
